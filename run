@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if [[ $(whoami) != root ]]; then
+	echo "launch this script in root"
+	exit 1
+fi
+
+rm /tmp/captured_keys.log
+rm /tmp/errors_keylogger.log
+sudo ./a.out

